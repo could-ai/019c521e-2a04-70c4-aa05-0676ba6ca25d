@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:speech_to_text/speech_to_text.dart';
 import 'package:couldai_user_app/integrations/supabase.dart';
 
 Future<void> main() async {
@@ -84,6 +85,7 @@ class SpreadsheetPage extends StatefulWidget {
 
 class _SpreadsheetPageState extends State<SpreadsheetPage> {
   final _supabase = Supabase.instance.client;
+  final SpeechToText _speechToText = SpeechToText();
   
   // Define the number of columns for our grid
   final int _columnCount = 4;
@@ -92,11 +94,51 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
   // Store row data objects
   final List<RowData> _rows = [];
   bool _isLoading = true;
+  bool _speechAvailable = false;
+  bool _isListening = false;
+  String _lastWords = '';
 
   @override
   void initState() {
     super.initState();
+    _initSpeech();
     _loadData();
+  }
+
+  void _initSpeech() async {
+    _speechAvailable = await _speechToText.initialize(
+      onStatus: (val) => print('onStatus: $val'),
+      onError: (val) => print('onError: $val'),
+    );
+    setState(() {});
+  }
+
+  void _startListening(TextEditingController controller) async {
+    if (!_speechAvailable) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Speech recognition not available')),
+      );
+      return;
+    }
+
+    setState(() => _isListening = true);
+    await _speechToText.listen(
+      onResult: (val) {
+        setState(() {
+          _lastWords = val.recognizedWords;
+          controller.text = _lastWords;
+        });
+      },
+      listenFor: const Duration(seconds: 30),
+      pauseFor: const Duration(seconds: 5),
+      partialResults: true,
+      localeId: 'en_US', // You can make this configurable
+    );
+  }
+
+  void _stopListening() async {
+    await _speechToText.stop();
+    setState(() => _isListening = false);
   }
 
   @override
@@ -105,6 +147,7 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
     for (var row in _rows) {
       row.dispose();
     }
+    _speechToText.stop();
     super.dispose();
   }
 
@@ -476,15 +519,37 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
                                       ),
                                     ),
                                   ),
-                                  child: TextField(
-                                    controller: rowData.controllers[colIndex],
-                                    textAlign: TextAlign.center,
-                                    decoration: const InputDecoration(
-                                      border: InputBorder.none,
-                                      contentPadding: EdgeInsets.all(8.0),
-                                      isDense: true,
-                                    ),
-                                    keyboardType: TextInputType.text,
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: TextField(
+                                          controller: rowData.controllers[colIndex],
+                                          textAlign: TextAlign.center,
+                                          decoration: const InputDecoration(
+                                            border: InputBorder.none,
+                                            contentPadding: EdgeInsets.all(8.0),
+                                            isDense: true,
+                                          ),
+                                          keyboardType: TextInputType.text,
+                                        ),
+                                      ),
+                                      IconButton(
+                                        icon: Icon(
+                                          _isListening ? Icons.mic_off : Icons.mic,
+                                          color: _isListening ? Colors.red : Colors.blue,
+                                        ),
+                                        onPressed: () {
+                                          if (_isListening) {
+                                            _stopListening();
+                                          } else {
+                                            _startListening(rowData.controllers[colIndex]);
+                                          }
+                                        },
+                                        iconSize: 20,
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+                                      ),
+                                    ],
                                   ),
                                 ),
                               );
@@ -519,17 +584,39 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
                                               border: Border.all(color: Colors.grey.shade300),
                                               borderRadius: BorderRadius.circular(4),
                                             ),
-                                            child: TextField(
-                                              controller: rowData.subRows[subIndex].controllers[fieldIndex],
-                                              textAlign: TextAlign.center,
-                                              decoration: InputDecoration(
-                                                hintText: 'Sub ${fieldIndex + 1}',
-                                                hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 12),
-                                                border: InputBorder.none,
-                                                contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                                                isDense: true,
-                                              ),
-                                              style: const TextStyle(fontSize: 13),
+                                            child: Row(
+                                              children: [
+                                                Expanded(
+                                                  child: TextField(
+                                                    controller: rowData.subRows[subIndex].controllers[fieldIndex],
+                                                    textAlign: TextAlign.center,
+                                                    decoration: InputDecoration(
+                                                      hintText: 'Sub ${fieldIndex + 1}',
+                                                      hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+                                                      border: InputBorder.none,
+                                                      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                                                      isDense: true,
+                                                    ),
+                                                    style: const TextStyle(fontSize: 13),
+                                                  ),
+                                                ),
+                                                IconButton(
+                                                  icon: Icon(
+                                                    _isListening ? Icons.mic_off : Icons.mic,
+                                                    color: _isListening ? Colors.red : Colors.blue,
+                                                  ),
+                                                  onPressed: () {
+                                                    if (_isListening) {
+                                                      _stopListening();
+                                                    } else {
+                                                      _startListening(rowData.subRows[subIndex].controllers[fieldIndex]);
+                                                    }
+                                                  },
+                                                  iconSize: 16,
+                                                  padding: EdgeInsets.zero,
+                                                  constraints: const BoxConstraints(minWidth: 25, minHeight: 25),
+                                                ),
+                                              ],
                                             ),
                                           ),
                                         );
