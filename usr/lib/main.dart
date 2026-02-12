@@ -96,7 +96,7 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
   final _supabase = Supabase.instance.client;
   
   // Define the number of columns for our grid
-  final int _columnCount = 4;
+  final int _columnCount = 3;
   final int _subRowColumnCount = 3;
   
   // Store row data objects
@@ -137,7 +137,6 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
           TextEditingController(text: rowMap['col_a'] ?? ''),
           TextEditingController(text: rowMap['col_b'] ?? ''),
           TextEditingController(text: rowMap['col_c'] ?? ''),
-          TextEditingController(text: rowMap['col_d'] ?? ''),
         ];
 
         // Create focus nodes for main row
@@ -236,7 +235,6 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
         'col_a': row.controllers[0].text,
         'col_b': row.controllers[1].text,
         'col_c': row.controllers[2].text,
-        'col_d': row.controllers[3].text,
       }).eq('id', row.id!);
       debugPrint('Autosaved row ${row.id}');
     } catch (e) {
@@ -290,7 +288,6 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
             'col_a': '',
             'col_b': '',
             'col_c': '',
-            'col_d': '',
           })
           .select()
           .single();
@@ -427,7 +424,6 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
             'col_a': row.controllers[0].text,
             'col_b': row.controllers[1].text,
             'col_c': row.controllers[2].text,
-            'col_d': row.controllers[3].text,
           }).eq('id', row.id!);
 
           for (var subRow in row.subRows) {
@@ -494,7 +490,7 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
                 ...List.generate(_columnCount, (index) {
                   return Expanded(
                     child: Text(
-                      'Column ${String.fromCharCode(65 + index)}', // A, B, C, D...
+                      'Column ${String.fromCharCode(65 + index)}', // A, B, C...
                       textAlign: TextAlign.center,
                       style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
