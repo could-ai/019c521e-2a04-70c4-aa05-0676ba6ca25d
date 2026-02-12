@@ -20,7 +20,7 @@ class SpreadsheetApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Spreadsheet Entry',
+      title: 'Tariff  Tree Entry',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
@@ -38,21 +38,16 @@ class SubRowData {
   final int? id;
   final int? parentRowId;
   final List<TextEditingController> controllers;
-  final List<FocusNode> focusNodes;
 
   SubRowData({
     this.id,
     this.parentRowId,
     required this.controllers,
-    required this.focusNodes,
   });
 
   void dispose() {
     for (var controller in controllers) {
       controller.dispose();
-    }
-    for (var node in focusNodes) {
-      node.dispose();
     }
   }
 }
@@ -60,14 +55,12 @@ class SubRowData {
 class RowData {
   final int? id;
   final List<TextEditingController> controllers;
-  final List<FocusNode> focusNodes;
   final List<SubRowData> subRows;
   bool isExpanded;
 
   RowData({
     this.id,
     required this.controllers,
-    required this.focusNodes,
     List<SubRowData>? subRows,
     this.isExpanded = false,
   }) : subRows = subRows ?? [];
@@ -75,9 +68,6 @@ class RowData {
   void dispose() {
     for (var controller in controllers) {
       controller.dispose();
-    }
-    for (var node in focusNodes) {
-      node.dispose();
     }
     for (var subRow in subRows) {
       subRow.dispose();
@@ -96,7 +86,7 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
   final _supabase = Supabase.instance.client;
   
   // Define the number of columns for our grid
-  final int _columnCount = 3;
+  final int _columnCount = 4;
   final int _subRowColumnCount = 3;
   
   // Store row data objects
@@ -137,13 +127,8 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
           TextEditingController(text: rowMap['col_a'] ?? ''),
           TextEditingController(text: rowMap['col_b'] ?? ''),
           TextEditingController(text: rowMap['col_c'] ?? ''),
+          TextEditingController(text: rowMap['col_d'] ?? ''),
         ];
-
-        // Create focus nodes for main row
-        List<FocusNode> focusNodes = List.generate(
-          _columnCount,
-          (index) => FocusNode(),
-        );
 
         // Fetch sub-rows for this row
         final subRowsResponse = await _supabase
@@ -159,32 +144,18 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
             TextEditingController(text: subRowMap['col_2'] ?? ''),
             TextEditingController(text: subRowMap['col_3'] ?? ''),
           ];
-          
-          List<FocusNode> subFocusNodes = List.generate(
-            _subRowColumnCount,
-            (index) => FocusNode(),
-          );
-
-          final subRow = SubRowData(
+          subRows.add(SubRowData(
             id: subRowMap['id'] as int,
             parentRowId: rowId,
             controllers: subControllers,
-            focusNodes: subFocusNodes,
-          );
-          
-          _attachFocusListenersToSubRow(subRow);
-          subRows.add(subRow);
+          ));
         }
 
-        final row = RowData(
+        loadedRows.add(RowData(
           id: rowId,
           controllers: controllers,
-          focusNodes: focusNodes,
           subRows: subRows,
-        );
-        
-        _attachFocusListenersToRow(row);
-        loadedRows.add(row);
+        ));
       }
 
       setState(() {
@@ -208,74 +179,16 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
     }
   }
 
-  void _attachFocusListenersToRow(RowData row) {
-    for (var node in row.focusNodes) {
-      node.addListener(() {
-        if (!node.hasFocus) {
-          _saveRow(row);
-        }
-      });
-    }
-  }
-
-  void _attachFocusListenersToSubRow(SubRowData subRow) {
-    for (var node in subRow.focusNodes) {
-      node.addListener(() {
-        if (!node.hasFocus) {
-          _saveSubRow(subRow);
-        }
-      });
-    }
-  }
-
-  Future<void> _saveRow(RowData row) async {
-    if (row.id == null) return;
-    try {
-      await _supabase.from('spreadsheet_rows').update({
-        'col_a': row.controllers[0].text,
-        'col_b': row.controllers[1].text,
-        'col_c': row.controllers[2].text,
-      }).eq('id', row.id!);
-      debugPrint('Autosaved row ${row.id}');
-    } catch (e) {
-      debugPrint('Error autosaving row: $e');
-    }
-  }
-
-  Future<void> _saveSubRow(SubRowData subRow) async {
-    if (subRow.id == null) return;
-    try {
-      await _supabase.from('spreadsheet_sub_rows').update({
-        'col_1': subRow.controllers[0].text,
-        'col_2': subRow.controllers[1].text,
-        'col_3': subRow.controllers[2].text,
-      }).eq('id', subRow.id!);
-      debugPrint('Autosaved sub-row ${subRow.id}');
-    } catch (e) {
-      debugPrint('Error autosaving sub-row: $e');
-    }
-  }
-
   Future<void> _addNewRow({bool localOnly = false}) async {
     // Create controllers first
     List<TextEditingController> newRowControllers = List.generate(
       _columnCount,
       (index) => TextEditingController(),
     );
-    
-    List<FocusNode> newRowFocusNodes = List.generate(
-      _columnCount,
-      (index) => FocusNode(),
-    );
 
     if (localOnly) {
-      final row = RowData(
-        controllers: newRowControllers,
-        focusNodes: newRowFocusNodes,
-      );
-      // No listeners for localOnly as we can't save without ID
       setState(() {
-        _rows.add(row);
+        _rows.add(RowData(controllers: newRowControllers));
       });
       return;
     }
@@ -288,28 +201,22 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
             'col_a': '',
             'col_b': '',
             'col_c': '',
+            'col_d': '',
           })
           .select()
           .single();
 
-      final row = RowData(
-        id: response['id'] as int,
-        controllers: newRowControllers,
-        focusNodes: newRowFocusNodes,
-      );
-      
-      _attachFocusListenersToRow(row);
-
       setState(() {
-        _rows.add(row);
+        _rows.add(RowData(
+          id: response['id'] as int,
+          controllers: newRowControllers,
+        ));
       });
     } catch (e) {
       debugPrint('Error adding row: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error adding row: $e')),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error adding row: $e')),
+      );
     }
   }
 
@@ -345,11 +252,6 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
       _subRowColumnCount,
       (index) => TextEditingController(),
     );
-    
-    List<FocusNode> newSubRowFocusNodes = List.generate(
-      _subRowColumnCount,
-      (index) => FocusNode(),
-    );
 
     try {
       final response = await _supabase
@@ -363,25 +265,18 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
           .select()
           .single();
 
-      final subRow = SubRowData(
-        id: response['id'] as int,
-        parentRowId: parentId,
-        controllers: newSubRowControllers,
-        focusNodes: newSubRowFocusNodes,
-      );
-      
-      _attachFocusListenersToSubRow(subRow);
-
       setState(() {
-        parentRow.subRows.add(subRow);
+        parentRow.subRows.add(SubRowData(
+          id: response['id'] as int,
+          parentRowId: parentId,
+          controllers: newSubRowControllers,
+        ));
       });
     } catch (e) {
       debugPrint('Error adding sub-row: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error adding sub-row: $e')),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error adding sub-row: $e')),
+      );
     }
   }
 
@@ -424,6 +319,7 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
             'col_a': row.controllers[0].text,
             'col_b': row.controllers[1].text,
             'col_c': row.controllers[2].text,
+            'col_d': row.controllers[3].text,
           }).eq('id', row.id!);
 
           for (var subRow in row.subRows) {
@@ -490,7 +386,7 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
                 ...List.generate(_columnCount, (index) {
                   return Expanded(
                     child: Text(
-                      'Column ${String.fromCharCode(65 + index)}', // A, B, C...
+                      'Column ${String.fromCharCode(65 + index)}', // A, B, C, D...
                       textAlign: TextAlign.center,
                       style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
@@ -582,7 +478,6 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
                                   ),
                                   child: TextField(
                                     controller: rowData.controllers[colIndex],
-                                    focusNode: rowData.focusNodes[colIndex],
                                     textAlign: TextAlign.center,
                                     decoration: const InputDecoration(
                                       border: InputBorder.none,
@@ -626,7 +521,6 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
                                             ),
                                             child: TextField(
                                               controller: rowData.subRows[subIndex].controllers[fieldIndex],
-                                              focusNode: rowData.subRows[subIndex].focusNodes[fieldIndex],
                                               textAlign: TextAlign.center,
                                               decoration: InputDecoration(
                                                 hintText: 'Sub ${fieldIndex + 1}',
