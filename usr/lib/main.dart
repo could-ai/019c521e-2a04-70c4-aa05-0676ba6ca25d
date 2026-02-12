@@ -67,6 +67,17 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
     });
   }
 
+  void _removeRow(int index) {
+    // Dispose controllers for the row being removed
+    for (var controller in _rows[index]) {
+      controller.dispose();
+    }
+    
+    setState(() {
+      _rows.removeAt(index);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -111,55 +122,79 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
             child: ListView.builder(
               itemCount: _rows.length,
               itemBuilder: (context, rowIndex) {
-                return Container(
-                  decoration: BoxDecoration(
-                    border: Border(
-                      bottom: BorderSide(color: Colors.grey.shade300),
-                    ),
+                // Use the list object itself as a unique key for the Dismissible
+                // This ensures the correct row is dismissed even if the list changes
+                final rowControllers = _rows[rowIndex];
+                
+                return Dismissible(
+                  key: ObjectKey(rowControllers),
+                  direction: DismissDirection.endToStart,
+                  background: Container(
+                    color: Colors.red,
+                    alignment: Alignment.centerRight,
+                    padding: const EdgeInsets.symmetric(horizontal: 20.0),
+                    child: const Icon(Icons.delete, color: Colors.white),
                   ),
-                  child: Row(
-                    children: [
-                      // Row Number
-                      SizedBox(
-                        width: 40,
-                        child: Text(
-                          '${rowIndex + 1}',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: Colors.grey.shade600,
-                            fontWeight: FontWeight.bold,
+                  onDismissed: (direction) {
+                    _removeRow(rowIndex);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Row ${rowIndex + 1} deleted'),
+                        duration: const Duration(seconds: 2),
+                      ),
+                    );
+                  },
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surface,
+                      border: Border(
+                        bottom: BorderSide(color: Colors.grey.shade300),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        // Row Number
+                        SizedBox(
+                          width: 40,
+                          child: Text(
+                            '${rowIndex + 1}',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: Colors.grey.shade600,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
-                      ),
-                      // Vertical Divider
-                      Container(width: 1, height: 50, color: Colors.grey.shade300),
-                      
-                      // Editable Cells
-                      ...List.generate(_columnCount, (colIndex) {
-                        return Expanded(
-                          child: Container(
-                            decoration: BoxDecoration(
-                              border: Border(
-                                right: BorderSide(
-                                  color: Colors.grey.shade300,
-                                  width: colIndex == _columnCount - 1 ? 0 : 1,
+                        // Vertical Divider
+                        Container(width: 1, height: 50, color: Colors.grey.shade300),
+                        
+                        // Editable Cells
+                        ...List.generate(_columnCount, (colIndex) {
+                          return Expanded(
+                            child: Container(
+                              decoration: BoxDecoration(
+                                border: Border(
+                                  right: BorderSide(
+                                    color: Colors.grey.shade300,
+                                    width: colIndex == _columnCount - 1 ? 0 : 1,
+                                  ),
                                 ),
                               ),
-                            ),
-                            child: TextField(
-                              controller: _rows[rowIndex][colIndex],
-                              textAlign: TextAlign.center,
-                              decoration: const InputDecoration(
-                                border: InputBorder.none,
-                                contentPadding: EdgeInsets.all(8.0),
-                                isDense: true,
+                              child: TextField(
+                                controller: _rows[rowIndex][colIndex],
+                                textAlign: TextAlign.center,
+                                decoration: const InputDecoration(
+                                  border: InputBorder.none,
+                                  contentPadding: EdgeInsets.all(8.0),
+                                  isDense: true,
+                                ),
+                                keyboardType: TextInputType.text,
                               ),
-                              keyboardType: TextInputType.text,
                             ),
-                          ),
-                        );
-                      }),
-                    ],
+                          );
+                        }),
+                      ],
+                    ),
                   ),
                 );
               },
