@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:couldai_user_app/integrations/supabase.dart';
-import 'dart:async';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -84,14 +83,6 @@ class RowData {
       subRow.dispose();
     }
   }
-
-  bool get hasFocus {
-    if (focusNodes.any((node) => node.hasFocus)) return true;
-    for (var subRow in subRows) {
-      if (subRow.focusNodes.any((node) => node.hasFocus)) return true;
-    }
-    return false;
-  }
 }
 
 class SpreadsheetPage extends StatefulWidget {
@@ -111,9 +102,6 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
   // Store row data objects
   final List<RowData> _rows = [];
   bool _isLoading = true;
-  
-  // Track the currently focused row for autosave logic
-  RowData? _focusedRow;
 
   @override
   void initState() {
@@ -144,14 +132,15 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
       for (var rowMap in rowsResponse) {
         final rowId = rowMap['id'] as int;
         
-        // Create controllers and focus nodes for main row
+        // Create controllers for main row
         List<TextEditingController> controllers = [
           TextEditingController(text: rowMap['col_a'] ?? ''),
           TextEditingController(text: rowMap['col_b'] ?? ''),
           TextEditingController(text: rowMap['col_c'] ?? ''),
           TextEditingController(text: rowMap['col_d'] ?? ''),
         ];
-        
+
+        // Create focus nodes for main row
         List<FocusNode> focusNodes = List.generate(
           _columnCount,
           (index) => FocusNode(),
@@ -176,24 +165,27 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
             _subRowColumnCount,
             (index) => FocusNode(),
           );
-          
-          subRows.add(SubRowData(
+
+          final subRow = SubRowData(
             id: subRowMap['id'] as int,
             parentRowId: rowId,
             controllers: subControllers,
             focusNodes: subFocusNodes,
-          ));
+          );
+          
+          _attachFocusListenersToSubRow(subRow);
+          subRows.add(subRow);
         }
 
-        final newRow = RowData(
+        final row = RowData(
           id: rowId,
           controllers: controllers,
           focusNodes: focusNodes,
           subRows: subRows,
         );
         
-        _attachFocusListeners(newRow);
-        loadedRows.add(newRow);
+        _attachFocusListenersToRow(row);
+        loadedRows.add(row);
       }
 
       setState(() {
@@ -217,52 +209,21 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
     }
   }
 
-  void _attachFocusListeners(RowData row) {
-    // Attach listeners to main row focus nodes
+  void _attachFocusListenersToRow(RowData row) {
     for (var node in row.focusNodes) {
-      node.addListener(() => _handleFocusChange(row));
-    }
-    
-    // Attach listeners to existing sub-rows
-    for (var subRow in row.subRows) {
-      _attachSubRowFocusListeners(row, subRow);
-    }
-  }
-
-  void _attachSubRowFocusListeners(RowData parentRow, SubRowData subRow) {
-    for (var node in subRow.focusNodes) {
-      node.addListener(() => _handleFocusChange(parentRow));
-    }
-  }
-
-  void _handleFocusChange(RowData row) {
-    // This is called whenever a focus node changes state (gain or lose focus)
-    
-    // If the row (or any of its children) gained focus
-    if (row.hasFocus) {
-      // If we switched from another row to this one
-      if (_focusedRow != null && _focusedRow != row) {
-        _saveRow(_focusedRow!);
-      }
-      _focusedRow = row;
-    } else {
-      // The row lost focus (or a specific field did).
-      // We need to check if focus moved to another field in the SAME row,
-      // or if it moved to another row, or if it was lost completely (keyboard dismissed).
-      
-      // Use a microtask to allow the focus cycle to complete so we can see where focus went
-      Future.delayed(Duration.zero, () {
-        // If the row still has focus (moved to another field in same row), do nothing.
-        if (row.hasFocus) return;
-
-        // If focus moved to another row, that row's listener will handle the save of this row.
-        // We only need to handle the case where focus is lost completely (e.g. keyboard dismissed).
-        
-        // Check if _focusedRow is still pointing to this row.
-        // If so, it means no other row claimed focus yet.
-        if (_focusedRow == row) {
+      node.addListener(() {
+        if (!node.hasFocus) {
           _saveRow(row);
-          _focusedRow = null;
+        }
+      });
+    }
+  }
+
+  void _attachFocusListenersToSubRow(SubRowData subRow) {
+    for (var node in subRow.focusNodes) {
+      node.addListener(() {
+        if (!node.hasFocus) {
+          _saveSubRow(subRow);
         }
       });
     }
@@ -270,41 +231,30 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
 
   Future<void> _saveRow(RowData row) async {
     if (row.id == null) return;
-    
-    debugPrint('Autosaving row ${row.id}...');
-    
     try {
-      // Update main row
       await _supabase.from('spreadsheet_rows').update({
         'col_a': row.controllers[0].text,
         'col_b': row.controllers[1].text,
         'col_c': row.controllers[2].text,
         'col_d': row.controllers[3].text,
       }).eq('id', row.id!);
-
-      // Update sub-rows
-      for (var subRow in row.subRows) {
-        if (subRow.id != null) {
-          await _supabase.from('spreadsheet_sub_rows').update({
-            'col_1': subRow.controllers[0].text,
-            'col_2': subRow.controllers[1].text,
-            'col_3': subRow.controllers[2].text,
-          }).eq('id', subRow.id!);
-        }
-      }
-      debugPrint('Row ${row.id} autosaved successfully.');
-      
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Row autosaved'),
-            duration: Duration(milliseconds: 800),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
+      debugPrint('Autosaved row ${row.id}');
     } catch (e) {
-      debugPrint('Error autosaving row ${row.id}: $e');
+      debugPrint('Error autosaving row: $e');
+    }
+  }
+
+  Future<void> _saveSubRow(SubRowData subRow) async {
+    if (subRow.id == null) return;
+    try {
+      await _supabase.from('spreadsheet_sub_rows').update({
+        'col_1': subRow.controllers[0].text,
+        'col_2': subRow.controllers[1].text,
+        'col_3': subRow.controllers[2].text,
+      }).eq('id', subRow.id!);
+      debugPrint('Autosaved sub-row ${subRow.id}');
+    } catch (e) {
+      debugPrint('Error autosaving sub-row: $e');
     }
   }
 
@@ -321,13 +271,13 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
     );
 
     if (localOnly) {
-      final newRow = RowData(
+      final row = RowData(
         controllers: newRowControllers,
         focusNodes: newRowFocusNodes,
       );
-      _attachFocusListeners(newRow);
+      // No listeners for localOnly as we can't save without ID
       setState(() {
-        _rows.add(newRow);
+        _rows.add(row);
       });
       return;
     }
@@ -345,35 +295,33 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
           .select()
           .single();
 
-      final newRow = RowData(
+      final row = RowData(
         id: response['id'] as int,
         controllers: newRowControllers,
         focusNodes: newRowFocusNodes,
       );
       
-      _attachFocusListeners(newRow);
+      _attachFocusListenersToRow(row);
 
       setState(() {
-        _rows.add(newRow);
+        _rows.add(row);
       });
     } catch (e) {
       debugPrint('Error adding row: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error adding row: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error adding row: $e')),
+        );
+      }
     }
   }
 
   Future<void> _removeRow(int index) async {
     final row = _rows[index];
     final rowId = row.id;
-    
-    // If we are removing the focused row, clear the focus tracker so we don't try to save it
-    if (_focusedRow == row) {
-      _focusedRow = null;
-    }
 
     // Remove from UI immediately for responsiveness
+    // We keep a reference to dispose later if needed, but for now just remove from list
     setState(() {
       _rows.removeAt(index);
     });
@@ -383,6 +331,7 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
         await _supabase.from('spreadsheet_rows').delete().eq('id', rowId);
       } catch (e) {
         debugPrint('Error deleting row: $e');
+        // Optionally restore the row if delete fails
       }
     }
     
@@ -416,24 +365,26 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
           })
           .select()
           .single();
-      
-      final newSubRow = SubRowData(
+
+      final subRow = SubRowData(
         id: response['id'] as int,
         parentRowId: parentId,
         controllers: newSubRowControllers,
         focusNodes: newSubRowFocusNodes,
       );
       
-      _attachSubRowFocusListeners(parentRow, newSubRow);
+      _attachFocusListenersToSubRow(subRow);
 
       setState(() {
-        parentRow.subRows.add(newSubRow);
+        parentRow.subRows.add(subRow);
       });
     } catch (e) {
       debugPrint('Error adding sub-row: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error adding sub-row: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error adding sub-row: $e')),
+        );
+      }
     }
   }
 
@@ -464,6 +415,9 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
 
   Future<void> _saveAllData() async {
     // Save all current values to Supabase
+    // This is a simple implementation that updates every row. 
+    // In a production app, you'd track dirty states.
+    
     bool hasError = false;
 
     for (var row in _rows) {
@@ -504,236 +458,231 @@ class _SpreadsheetPageState extends State<SpreadsheetPage> {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () {
-        // Unfocus everything when tapping outside
-        FocusScope.of(context).unfocus();
-      },
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Data Entry Grid'),
-          backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.save),
-              tooltip: 'Save All Changes',
-              onPressed: _saveAllData,
-            ),
-          ],
-        ),
-        body: _isLoading 
-          ? const Center(child: CircularProgressIndicator())
-          : Column(
-          children: [
-            // Header Row
-            Container(
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-              padding: const EdgeInsets.symmetric(vertical: 12.0),
-              child: Row(
-                children: [
-                  const SizedBox(width: 40), // Space for expand icon
-                  // Row Number Header
-                  const SizedBox(
-                    width: 40,
-                    child: Text(
-                      '#',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Data Entry Grid'),
+        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.save),
+            tooltip: 'Save All Changes',
+            onPressed: _saveAllData,
+          ),
+        ],
+      ),
+      body: _isLoading 
+        ? const Center(child: CircularProgressIndicator())
+        : Column(
+        children: [
+          // Header Row
+          Container(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            padding: const EdgeInsets.symmetric(vertical: 12.0),
+            child: Row(
+              children: [
+                const SizedBox(width: 40), // Space for expand icon
+                // Row Number Header
+                const SizedBox(
+                  width: 40,
+                  child: Text(
+                    '#',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontWeight: FontWeight.bold),
                   ),
-                  // Data Column Headers
-                  ...List.generate(_columnCount, (index) {
-                    return Expanded(
-                      child: Text(
-                        'Column ${String.fromCharCode(65 + index)}', // A, B, C, D...
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                // Data Column Headers
+                ...List.generate(_columnCount, (index) {
+                  return Expanded(
+                    child: Text(
+                      'Column ${String.fromCharCode(65 + index)}', // A, B, C, D...
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  );
+                }),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          
+          // Scrollable Grid Area
+          Expanded(
+            child: ListView.builder(
+              itemCount: _rows.length,
+              itemBuilder: (context, rowIndex) {
+                // Use the list object itself as a unique key for the Dismissible
+                // This ensures the correct row is dismissed even if the list changes
+                final rowData = _rows[rowIndex];
+                
+                return Dismissible(
+                  key: ObjectKey(rowData),
+                  direction: DismissDirection.endToStart,
+                  background: Container(
+                    color: Colors.red,
+                    alignment: Alignment.centerRight,
+                    padding: const EdgeInsets.symmetric(horizontal: 20.0),
+                    child: const Icon(Icons.delete, color: Colors.white),
+                  ),
+                  onDismissed: (direction) {
+                    _removeRow(rowIndex);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Row ${rowIndex + 1} deleted'),
+                        duration: const Duration(seconds: 2),
                       ),
                     );
-                  }),
-                ],
-              ),
-            ),
-            const Divider(height: 1),
-            
-            // Scrollable Grid Area
-            Expanded(
-              child: ListView.builder(
-                itemCount: _rows.length,
-                itemBuilder: (context, rowIndex) {
-                  // Use the list object itself as a unique key for the Dismissible
-                  final rowData = _rows[rowIndex];
-                  
-                  return Dismissible(
-                    key: ObjectKey(rowData),
-                    direction: DismissDirection.endToStart,
-                    background: Container(
-                      color: Colors.red,
-                      alignment: Alignment.centerRight,
-                      padding: const EdgeInsets.symmetric(horizontal: 20.0),
-                      child: const Icon(Icons.delete, color: Colors.white),
-                    ),
-                    onDismissed: (direction) {
-                      _removeRow(rowIndex);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('Row ${rowIndex + 1} deleted'),
-                          duration: const Duration(seconds: 2),
-                        ),
-                      );
-                    },
-                    child: Column(
-                      children: [
-                        // Main Row
-                        Container(
-                          decoration: BoxDecoration(
-                            color: Theme.of(context).colorScheme.surface,
-                            border: Border(
-                              bottom: BorderSide(color: Colors.grey.shade300),
-                            ),
+                  },
+                  child: Column(
+                    children: [
+                      // Main Row
+                      Container(
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.surface,
+                          border: Border(
+                            bottom: BorderSide(color: Colors.grey.shade300),
                           ),
-                          child: Row(
+                        ),
+                        child: Row(
+                          children: [
+                            // Expand/Collapse Icon
+                            SizedBox(
+                              width: 40,
+                              child: IconButton(
+                                icon: Icon(rowData.isExpanded 
+                                  ? Icons.keyboard_arrow_up 
+                                  : Icons.keyboard_arrow_down
+                                ),
+                                onPressed: () => _toggleExpansion(rowIndex),
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                              ),
+                            ),
+                            // Row Number
+                            SizedBox(
+                              width: 40,
+                              child: Text(
+                                '${rowIndex + 1}',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: Colors.grey.shade600,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            // Vertical Divider
+                            Container(width: 1, height: 50, color: Colors.grey.shade300),
+                            
+                            // Editable Cells
+                            ...List.generate(_columnCount, (colIndex) {
+                              return Expanded(
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    border: Border(
+                                      right: BorderSide(
+                                        color: Colors.grey.shade300,
+                                        width: colIndex == _columnCount - 1 ? 0 : 1,
+                                      ),
+                                    ),
+                                  ),
+                                  child: TextField(
+                                    controller: rowData.controllers[colIndex],
+                                    focusNode: rowData.focusNodes[colIndex],
+                                    textAlign: TextAlign.center,
+                                    decoration: const InputDecoration(
+                                      border: InputBorder.none,
+                                      contentPadding: EdgeInsets.all(8.0),
+                                      isDense: true,
+                                    ),
+                                    keyboardType: TextInputType.text,
+                                  ),
+                                ),
+                              );
+                            }),
+                          ],
+                        ),
+                      ),
+                      
+                      // Sub-rows Section
+                      if (rowData.isExpanded)
+                        Container(
+                          color: Colors.grey.shade50,
+                          padding: const EdgeInsets.only(left: 40, right: 10, bottom: 10),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              // Expand/Collapse Icon
-                              SizedBox(
-                                width: 40,
-                                child: IconButton(
-                                  icon: Icon(rowData.isExpanded 
-                                    ? Icons.keyboard_arrow_up 
-                                    : Icons.keyboard_arrow_down
-                                  ),
-                                  onPressed: () => _toggleExpansion(rowIndex),
-                                  padding: EdgeInsets.zero,
-                                  constraints: const BoxConstraints(),
-                                ),
-                              ),
-                              // Row Number
-                              SizedBox(
-                                width: 40,
-                                child: Text(
-                                  '${rowIndex + 1}',
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    color: Colors.grey.shade600,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                              // Vertical Divider
-                              Container(width: 1, height: 50, color: Colors.grey.shade300),
-                              
-                              // Editable Cells
-                              ...List.generate(_columnCount, (colIndex) {
-                                return Expanded(
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      border: Border(
-                                        right: BorderSide(
-                                          color: Colors.grey.shade300,
-                                          width: colIndex == _columnCount - 1 ? 0 : 1,
-                                        ),
+                              // Existing Sub-rows
+                              ...List.generate(rowData.subRows.length, (subIndex) {
+                                return Padding(
+                                  padding: const EdgeInsets.only(top: 8.0),
+                                  child: Row(
+                                    children: [
+                                      const Icon(Icons.subdirectory_arrow_right, size: 16, color: Colors.grey),
+                                      const SizedBox(width: 8),
+                                      // 3 Data Entry Fields
+                                      ...List.generate(_subRowColumnCount, (fieldIndex) {
+                                        return Expanded(
+                                          child: Container(
+                                            margin: const EdgeInsets.symmetric(horizontal: 4),
+                                            decoration: BoxDecoration(
+                                              color: Colors.white,
+                                              border: Border.all(color: Colors.grey.shade300),
+                                              borderRadius: BorderRadius.circular(4),
+                                            ),
+                                            child: TextField(
+                                              controller: rowData.subRows[subIndex].controllers[fieldIndex],
+                                              focusNode: rowData.subRows[subIndex].focusNodes[fieldIndex],
+                                              textAlign: TextAlign.center,
+                                              decoration: InputDecoration(
+                                                hintText: 'Sub ${fieldIndex + 1}',
+                                                hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+                                                border: InputBorder.none,
+                                                contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                                                isDense: true,
+                                              ),
+                                              style: const TextStyle(fontSize: 13),
+                                            ),
+                                          ),
+                                        );
+                                      }),
+                                      // Delete Sub-row Button
+                                      IconButton(
+                                        icon: const Icon(Icons.close, size: 18, color: Colors.red),
+                                        onPressed: () => _removeSubRow(rowIndex, subIndex),
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
                                       ),
-                                    ),
-                                    child: TextField(
-                                      controller: rowData.controllers[colIndex],
-                                      focusNode: rowData.focusNodes[colIndex],
-                                      textAlign: TextAlign.center,
-                                      decoration: const InputDecoration(
-                                        border: InputBorder.none,
-                                        contentPadding: EdgeInsets.all(8.0),
-                                        isDense: true,
-                                      ),
-                                      keyboardType: TextInputType.text,
-                                    ),
+                                    ],
                                   ),
                                 );
                               }),
+                              
+                              // Add Sub-row Button
+                              Padding(
+                                padding: const EdgeInsets.only(top: 8.0, left: 24),
+                                child: TextButton.icon(
+                                  onPressed: () => _addSubRow(rowIndex),
+                                  icon: const Icon(Icons.add, size: 16),
+                                  label: const Text('Add Sub-row'),
+                                  style: TextButton.styleFrom(
+                                    visualDensity: VisualDensity.compact,
+                                  ),
+                                ),
+                              ),
                             ],
                           ),
                         ),
-                        
-                        // Sub-rows Section
-                        if (rowData.isExpanded)
-                          Container(
-                            color: Colors.grey.shade50,
-                            padding: const EdgeInsets.only(left: 40, right: 10, bottom: 10),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                // Existing Sub-rows
-                                ...List.generate(rowData.subRows.length, (subIndex) {
-                                  return Padding(
-                                    padding: const EdgeInsets.only(top: 8.0),
-                                    child: Row(
-                                      children: [
-                                        const Icon(Icons.subdirectory_arrow_right, size: 16, color: Colors.grey),
-                                        const SizedBox(width: 8),
-                                        // 3 Data Entry Fields
-                                        ...List.generate(_subRowColumnCount, (fieldIndex) {
-                                          return Expanded(
-                                            child: Container(
-                                              margin: const EdgeInsets.symmetric(horizontal: 4),
-                                              decoration: BoxDecoration(
-                                                color: Colors.white,
-                                                border: Border.all(color: Colors.grey.shade300),
-                                                borderRadius: BorderRadius.circular(4),
-                                              ),
-                                              child: TextField(
-                                                controller: rowData.subRows[subIndex].controllers[fieldIndex],
-                                                focusNode: rowData.subRows[subIndex].focusNodes[fieldIndex],
-                                                textAlign: TextAlign.center,
-                                                decoration: InputDecoration(
-                                                  hintText: 'Sub ${fieldIndex + 1}',
-                                                  hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 12),
-                                                  border: InputBorder.none,
-                                                  contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                                                  isDense: true,
-                                                ),
-                                                style: const TextStyle(fontSize: 13),
-                                              ),
-                                            ),
-                                          );
-                                        }),
-                                        // Delete Sub-row Button
-                                        IconButton(
-                                          icon: const Icon(Icons.close, size: 18, color: Colors.red),
-                                          onPressed: () => _removeSubRow(rowIndex, subIndex),
-                                          padding: EdgeInsets.zero,
-                                          constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                }),
-                                
-                                // Add Sub-row Button
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 8.0, left: 24),
-                                  child: TextButton.icon(
-                                    onPressed: () => _addSubRow(rowIndex),
-                                    icon: const Icon(Icons.add, size: 16),
-                                    label: const Text('Add Sub-row'),
-                                    style: TextButton.styleFrom(
-                                      visualDensity: VisualDensity.compact,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                      ],
-                    ),
-                  );
-                },
-              ),
+                    ],
+                  ),
+                );
+              },
             ),
-          ],
-        ),
-        floatingActionButton: FloatingActionButton(
-          onPressed: () => _addNewRow(),
-          tooltip: 'Add Row',
-          child: const Icon(Icons.add),
-        ),
+          ),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => _addNewRow(),
+        tooltip: 'Add Row',
+        child: const Icon(Icons.add),
       ),
     );
   }
